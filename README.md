@@ -8,6 +8,7 @@ Sistema para varrer instalacoes Docker dentro de diretorios raiz configurados, s
 - Usa `ROOT_PATHS` do `.env` para definir quais diretorios raiz devem ser varridos.
 - Usa `SCAN_DEPTH` do `.env` para controlar ate quantos niveis abaixo de cada raiz a busca vai.
 - Executa `du -sb <instalacao>/volumes/*` para obter tamanho real em bytes.
+- Le `docker-compose.yml` de cada instalacao e extrai `BACKEND_URL` quando presente.
 - Salva cada leitura no Postgres com historico de coletas.
 - Exibe endpoints para listar execucoes e resumo em GB.
 

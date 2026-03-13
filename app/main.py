@@ -67,7 +67,7 @@ def latest_usage() -> LatestUsageResponse:
 
             cur.execute(
                 """
-                SELECT installation_name, installation_path, volume_name, size_bytes
+                SELECT installation_name, installation_path, volume_name, size_bytes, backend_url
                 FROM volume_usage
                 WHERE run_id = %s
                 ORDER BY installation_path, volume_name
@@ -110,7 +110,11 @@ def latest_usage_summary() -> LatestSummaryResponse:
 
             cur.execute(
                 """
-                SELECT installation_name, installation_path, SUM(size_bytes) AS total_bytes
+                SELECT
+                    installation_name,
+                    installation_path,
+                    MAX(backend_url) AS backend_url,
+                    SUM(size_bytes) AS total_bytes
                 FROM volume_usage
                 WHERE run_id = %s
                 GROUP BY installation_name, installation_path
@@ -126,6 +130,7 @@ def latest_usage_summary() -> LatestSummaryResponse:
             installation_path=row["installation_path"],
             total_bytes=row["total_bytes"],
             total_gb=round(row["total_bytes"] / (1024**3), 3),
+            backend_url=row["backend_url"],
         )
         for row in rows
     ]

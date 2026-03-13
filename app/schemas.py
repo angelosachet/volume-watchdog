@@ -9,6 +9,7 @@ class VolumeUsageItem(BaseModel):
     volume_name: str
     size_bytes: int
     size_gb: float
+    backend_url: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -34,6 +35,7 @@ class InstallationSummary(BaseModel):
     installation_path: str
     total_bytes: int
     total_gb: float
+    backend_url: str | None = None
 
 
 class LatestSummaryResponse(BaseModel):

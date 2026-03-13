@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import re
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +18,37 @@ class UsageRecord:
     installation_path: str
     volume_name: str
     size_bytes: int
+    backend_url: str | None
+
+
+BACKEND_URL_PATTERNS = (
+    re.compile(r"^\s*-\s*BACKEND_URL\s*=\s*(?P<value>.+?)\s*$"),
+    re.compile(r"^\s*BACKEND_URL\s*:\s*(?P<value>.+?)\s*$"),
+)
+
+
+def _normalize_env_value(raw_value: str) -> str | None:
+    value = raw_value.strip().strip('"').strip("'")
+    return value or None
+
+
+def _extract_backend_url(installation_path: Path) -> str | None:
+    compose_path = installation_path / "docker-compose.yml"
+    if not compose_path.exists() or not compose_path.is_file():
+        return None
+
+    try:
+        content = compose_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    for line in content.splitlines():
+        for pattern in BACKEND_URL_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                return _normalize_env_value(match.group("value"))
+
+    return None
 
 
 def _du_bytes_for_volumes(volumes_path: Path) -> list[tuple[str, int]]:
@@ -99,6 +131,7 @@ def collect_usage_records() -> list[UsageRecord]:
     for installation_path in find_installations():
         volumes_path = installation_path / "volumes"
         volumes = _du_bytes_for_volumes(volumes_path)
+        backend_url = _extract_backend_url(installation_path)
 
         for volume_name, size_bytes in volumes:
             records.append(
@@ -107,6 +140,7 @@ def collect_usage_records() -> list[UsageRecord]:
                     installation_path=str(installation_path),
                     volume_name=volume_name,
                     size_bytes=size_bytes,
+                    backend_url=backend_url,
                 )
             )
 
@@ -135,9 +169,10 @@ def save_scan(records: list[UsageRecord]) -> tuple[UUID, datetime]:
                         installation_name,
                         installation_path,
                         volume_name,
-                        size_bytes
+                        size_bytes,
+                        backend_url
                     )
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     [
                         (
@@ -146,6 +181,7 @@ def save_scan(records: list[UsageRecord]) -> tuple[UUID, datetime]:
                             rec.installation_path,
                             rec.volume_name,
                             rec.size_bytes,
+                            rec.backend_url,
                         )
                         for rec in records
                     ],

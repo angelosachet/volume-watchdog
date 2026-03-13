@@ -28,8 +28,12 @@ def init_db() -> None:
         installation_name TEXT NOT NULL,
         installation_path TEXT NOT NULL,
         volume_name TEXT NOT NULL,
-        size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0)
+        size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+        backend_url TEXT
     );
+
+    ALTER TABLE volume_usage
+    ADD COLUMN IF NOT EXISTS backend_url TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_volume_usage_installation
         ON volume_usage (installation_name, installation_path);
