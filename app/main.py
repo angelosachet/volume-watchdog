@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.collector import run_collection
+from app.config import settings
 from app.database import get_db, init_db
 from app.schemas import (
     CollectResponse,
@@ -12,6 +14,14 @@ from app.schemas import (
 )
 
 app = FastAPI(title="Size Manager API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.normalized_cors_allow_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")

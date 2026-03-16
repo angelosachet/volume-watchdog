@@ -32,7 +32,10 @@ cp .env.example .env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/size_manager
 ROOT_PATHS=/data/apps,/opt/stacks
 SCAN_DEPTH=1
+CORS_ALLOW_ORIGINS=https://seu-frontend.com.br,http://localhost:5173
 ```
+
+`CORS_ALLOW_ORIGINS` aceita lista separada por virgula. Use `*` para liberar todas as origens.
 
 ## Subindo o Postgres local (opcional)
 
@@ -70,6 +73,8 @@ python -m scripts.run_collection
 - `GET /runs?limit=20`
 - `GET /usage/latest`
 - `GET /usage/latest/summary` (total por instalacao e total geral em GB)
+
+Observacao: a rota `/` nao esta definida e retorna `404`. Use os endpoints acima ou `/docs`.
 
 ## Exemplo de resposta de resumo
 
