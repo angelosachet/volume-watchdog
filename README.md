@@ -8,6 +8,7 @@ Sistema para varrer instalacoes Docker dentro de diretorios raiz configurados, s
 - Usa `ROOT_PATHS` do `.env` para definir quais diretorios raiz devem ser varridos.
 - Usa `SCAN_DEPTH` do `.env` para controlar ate quantos niveis abaixo de cada raiz a busca vai.
 - Executa `du -sb <instalacao>/volumes/*` para obter tamanho real em bytes.
+- Faz varredura de arquivos por extensao em cada instalacao (fotos/videos/audios/textos/outros), no estilo do comando `find ... | awk`.
 - Le `docker-compose.yml` de cada instalacao e extrai `BACKEND_URL` quando presente.
 - Salva cada leitura no Postgres com historico de coletas.
 - Exibe endpoints para listar execucoes e resumo em GB.
@@ -33,6 +34,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/size_manager
 ROOT_PATHS=/data/apps,/opt/stacks
 SCAN_DEPTH=1
 CORS_ALLOW_ORIGINS=https://seu-frontend.com.br,http://localhost:5173
+APP_PORT=8004
 ```
 
 `CORS_ALLOW_ORIGINS` aceita lista separada por virgula. Use `*` para liberar todas as origens.
@@ -49,8 +51,10 @@ docker compose up -d postgres
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+python3 -m scripts.run_api
 ```
+
+`APP_PORT` define em qual porta a API sobe na VPS.
 
 ## Rodar coleta manual
 
@@ -73,8 +77,16 @@ python -m scripts.run_collection
 - `GET /runs?limit=20`
 - `GET /usage/latest`
 - `GET /usage/latest/summary` (total por instalacao e total geral em GB)
+- `GET /usage/latest/file-types` (categorias por instalacao no ultimo run)
+- `GET /usage/latest/file-types/by-url?url=https://instancia.exemplo.com` (retorna apenas a instalacao da URL)
 
 Observacao: a rota `/` nao esta definida e retorna `404`. Use os endpoints acima ou `/docs`.
+
+## Exemplo de consulta por URL
+
+```bash
+curl "http://localhost:8000/usage/latest/file-types/by-url?url=https://cliente-a.exemplo.com"
+```
 
 ## Exemplo de resposta de resumo
 
@@ -105,4 +117,52 @@ Observacao: a rota `/` nao esta definida e retorna `404`. Use os endpoints acima
 
 ```bash
 */30 * * * * cd /home/angelo/projects/size-manager && /home/angelo/projects/size-manager/.venv/bin/python -m scripts.run_collection >> /var/log/size-manager.log 2>&1
+```
+
+## Deploy com GitHub Actions
+
+O workflow foi criado em [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) e faz:
+
+- Validacao no push para `main` (instala dependencias e roda `compileall`).
+- Deploy via SSH no servidor apos validacao bem-sucedida.
+
+### Secrets necessarios no GitHub
+
+No repositorio, configure em **Settings > Secrets and variables > Actions**:
+
+- `SSH_HOST`: host do servidor (ex.: `203.0.113.10`)
+- `SSH_PORT`: porta SSH (ex.: `22`)
+- `SSH_USER`: usuario SSH
+- `SSH_PRIVATE_KEY`: chave privada para acesso ao servidor
+- `DEPLOY_PATH`: caminho do projeto no servidor (ex.: `/home/deploy/size-manager`)
+- `DEPLOY_COMMAND`: comando final de restart/reload (ex.: `sudo systemctl restart size-manager`)
+
+Na VPS, configure o arquivo `.env` com `APP_PORT` para definir a porta da API.
+Exemplo:
+
+```env
+APP_PORT=8004
+```
+
+Se seu deploy sobe o processo Python diretamente, um exemplo de `DEPLOY_COMMAND` e:
+
+```bash
+pkill -f "python3 -m scripts.run_api" || true
+nohup .venv/bin/python3 -m scripts.run_api > app.log 2>&1 &
+```
+
+### Comportamento do deploy
+
+No servidor remoto, o pipeline executa:
+
+```bash
+cd $DEPLOY_PATH
+git fetch --all
+git checkout main
+git pull --ff-only origin main
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+$DEPLOY_COMMAND
 ```

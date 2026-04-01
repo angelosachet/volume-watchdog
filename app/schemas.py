@@ -44,3 +44,33 @@ class LatestSummaryResponse(BaseModel):
     total_bytes: int
     total_gb: float
     installations: list[InstallationSummary]
+
+
+class FileTypeUsageByInstallation(BaseModel):
+    installation_name: str
+    installation_path: str
+    backend_url: str | None = None
+    photos_bytes: int
+    photos_mb: float
+    videos_bytes: int
+    videos_mb: float
+    audios_bytes: int
+    audios_mb: float
+    texts_bytes: int
+    texts_mb: float
+    others_bytes: int
+    others_mb: float
+    total_bytes: int
+    total_mb: float
+
+
+class LatestFileTypeUsageResponse(BaseModel):
+    run_id: str
+    scanned_at: datetime
+    installations: list[FileTypeUsageByInstallation]
+
+
+class FileTypeUsageByUrlResponse(BaseModel):
+    run_id: str
+    scanned_at: datetime
+    data: FileTypeUsageByInstallation

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     root_paths: str = "/data/apps,/opt/stacks"
     scan_depth: int = 1
     cors_allow_origins: str = "*"
+    app_port: int = 8004
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

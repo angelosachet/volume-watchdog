@@ -6,7 +6,10 @@ from app.config import settings
 from app.database import get_db, init_db
 from app.schemas import (
     CollectResponse,
+    FileTypeUsageByInstallation,
+    FileTypeUsageByUrlResponse,
     InstallationSummary,
+    LatestFileTypeUsageResponse,
     LatestSummaryResponse,
     LatestUsageResponse,
     RunSummary,
@@ -152,4 +155,123 @@ def latest_usage_summary() -> LatestSummaryResponse:
         total_bytes=total_bytes,
         total_gb=round(total_bytes / (1024**3), 3),
         installations=installations,
+    )
+
+
+def _build_file_type_item(row: dict) -> FileTypeUsageByInstallation:
+    total_bytes = (
+        row["photos_bytes"]
+        + row["videos_bytes"]
+        + row["audios_bytes"]
+        + row["texts_bytes"]
+        + row["others_bytes"]
+    )
+
+    return FileTypeUsageByInstallation(
+        installation_name=row["installation_name"],
+        installation_path=row["installation_path"],
+        backend_url=row["backend_url"],
+        photos_bytes=row["photos_bytes"],
+        photos_mb=round(row["photos_bytes"] / (1024**2), 2),
+        videos_bytes=row["videos_bytes"],
+        videos_mb=round(row["videos_bytes"] / (1024**2), 2),
+        audios_bytes=row["audios_bytes"],
+        audios_mb=round(row["audios_bytes"] / (1024**2), 2),
+        texts_bytes=row["texts_bytes"],
+        texts_mb=round(row["texts_bytes"] / (1024**2), 2),
+        others_bytes=row["others_bytes"],
+        others_mb=round(row["others_bytes"] / (1024**2), 2),
+        total_bytes=total_bytes,
+        total_mb=round(total_bytes / (1024**2), 2),
+    )
+
+
+@app.get("/usage/latest/file-types", response_model=LatestFileTypeUsageResponse)
+def latest_file_type_usage() -> LatestFileTypeUsageResponse:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id::text AS run_id, scanned_at
+                FROM scan_runs
+                ORDER BY scanned_at DESC
+                LIMIT 1
+                """
+            )
+            run_row = cur.fetchone()
+
+            if not run_row:
+                raise HTTPException(status_code=404, detail="Nenhuma coleta encontrada")
+
+            cur.execute(
+                """
+                SELECT
+                    installation_name,
+                    installation_path,
+                    backend_url,
+                    photos_bytes,
+                    videos_bytes,
+                    audios_bytes,
+                    texts_bytes,
+                    others_bytes
+                FROM installation_filetype_usage
+                WHERE run_id = %s
+                ORDER BY installation_path
+                """,
+                (run_row["run_id"],),
+            )
+            rows = cur.fetchall()
+
+    items = [_build_file_type_item(row) for row in rows]
+    return LatestFileTypeUsageResponse(
+        run_id=run_row["run_id"],
+        scanned_at=run_row["scanned_at"],
+        installations=items,
+    )
+
+
+@app.get("/usage/latest/file-types/by-url", response_model=FileTypeUsageByUrlResponse)
+def latest_file_type_usage_by_url(url: str = Query(..., min_length=1)) -> FileTypeUsageByUrlResponse:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id::text AS run_id, scanned_at
+                FROM scan_runs
+                ORDER BY scanned_at DESC
+                LIMIT 1
+                """
+            )
+            run_row = cur.fetchone()
+
+            if not run_row:
+                raise HTTPException(status_code=404, detail="Nenhuma coleta encontrada")
+
+            cur.execute(
+                """
+                SELECT
+                    installation_name,
+                    installation_path,
+                    backend_url,
+                    photos_bytes,
+                    videos_bytes,
+                    audios_bytes,
+                    texts_bytes,
+                    others_bytes
+                FROM installation_filetype_usage
+                WHERE run_id = %s AND backend_url = %s
+                ORDER BY installation_path
+                LIMIT 1
+                """,
+                (run_row["run_id"], url),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Nenhuma instalacao encontrada para a URL informada")
+
+    return FileTypeUsageByUrlResponse(
+        run_id=run_row["run_id"],
+        scanned_at=run_row["scanned_at"],
+        data=_build_file_type_item(row),
     )

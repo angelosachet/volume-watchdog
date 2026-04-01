@@ -32,6 +32,19 @@ def init_db() -> None:
         backend_url TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS installation_filetype_usage (
+        id BIGSERIAL PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES scan_runs(run_id) ON DELETE CASCADE,
+        installation_name TEXT NOT NULL,
+        installation_path TEXT NOT NULL,
+        backend_url TEXT,
+        photos_bytes BIGINT NOT NULL DEFAULT 0 CHECK (photos_bytes >= 0),
+        videos_bytes BIGINT NOT NULL DEFAULT 0 CHECK (videos_bytes >= 0),
+        audios_bytes BIGINT NOT NULL DEFAULT 0 CHECK (audios_bytes >= 0),
+        texts_bytes BIGINT NOT NULL DEFAULT 0 CHECK (texts_bytes >= 0),
+        others_bytes BIGINT NOT NULL DEFAULT 0 CHECK (others_bytes >= 0)
+    );
+
     ALTER TABLE volume_usage
     ADD COLUMN IF NOT EXISTS backend_url TEXT;
 
@@ -40,6 +53,12 @@ def init_db() -> None:
 
     CREATE INDEX IF NOT EXISTS idx_volume_usage_run_id
         ON volume_usage (run_id);
+
+    CREATE INDEX IF NOT EXISTS idx_filetype_usage_run_id
+        ON installation_filetype_usage (run_id);
+
+    CREATE INDEX IF NOT EXISTS idx_filetype_usage_backend_url
+        ON installation_filetype_usage (backend_url);
     """
 
     with get_db() as conn:

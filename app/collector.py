@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import re
+from collections import defaultdict
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,6 +20,24 @@ class UsageRecord:
     volume_name: str
     size_bytes: int
     backend_url: str | None
+
+
+@dataclass
+class FileTypeUsageRecord:
+    installation_name: str
+    installation_path: str
+    backend_url: str | None
+    photos_bytes: int
+    videos_bytes: int
+    audios_bytes: int
+    texts_bytes: int
+    others_bytes: int
+
+
+PHOTO_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+VIDEO_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "webm"}
+AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "aac"}
+TEXT_EXTENSIONS = {"txt", "md", "log", "csv", "json"}
 
 
 BACKEND_URL_PATTERNS = (
@@ -147,7 +166,73 @@ def collect_usage_records() -> list[UsageRecord]:
     return records
 
 
-def save_scan(records: list[UsageRecord]) -> tuple[UUID, datetime]:
+def _categorize_extension(ext: str) -> str:
+    normalized = ext.lower().lstrip(".")
+    if normalized in PHOTO_EXTENSIONS:
+        return "photos"
+    if normalized in VIDEO_EXTENSIONS:
+        return "videos"
+    if normalized in AUDIO_EXTENSIONS:
+        return "audios"
+    if normalized in TEXT_EXTENSIONS:
+        return "texts"
+    return "others"
+
+
+def _collect_file_type_usage_for_installation(installation_path: Path) -> dict[str, int]:
+    totals: dict[str, int] = defaultdict(int)
+
+    try:
+        for file_path in installation_path.rglob("*"):
+            if not file_path.is_file():
+                continue
+
+            try:
+                file_size = file_path.stat().st_size
+            except OSError:
+                continue
+
+            category = _categorize_extension(file_path.suffix)
+            totals[category] += file_size
+    except OSError:
+        pass
+
+    return {
+        "photos": int(totals.get("photos", 0)),
+        "videos": int(totals.get("videos", 0)),
+        "audios": int(totals.get("audios", 0)),
+        "texts": int(totals.get("texts", 0)),
+        "others": int(totals.get("others", 0)),
+    }
+
+
+def collect_file_type_usage_records() -> list[FileTypeUsageRecord]:
+    records: list[FileTypeUsageRecord] = []
+
+    for installation_path in find_installations():
+        backend_url = _extract_backend_url(installation_path)
+        categorized = _collect_file_type_usage_for_installation(installation_path)
+
+        records.append(
+            FileTypeUsageRecord(
+                installation_name=installation_path.name,
+                installation_path=str(installation_path),
+                backend_url=backend_url,
+                photos_bytes=categorized["photos"],
+                videos_bytes=categorized["videos"],
+                audios_bytes=categorized["audios"],
+                texts_bytes=categorized["texts"],
+                others_bytes=categorized["others"],
+            )
+        )
+
+    return records
+
+
+def save_scan(
+    records: list[UsageRecord],
+    file_type_records: list[FileTypeUsageRecord],
+) -> tuple[UUID, datetime]:
     run_id = uuid4()
     scanned_at = datetime.now(timezone.utc)
 
@@ -186,6 +271,38 @@ def save_scan(records: list[UsageRecord]) -> tuple[UUID, datetime]:
                         for rec in records
                     ],
                 )
+
+            if file_type_records:
+                cur.executemany(
+                    """
+                    INSERT INTO installation_filetype_usage (
+                        run_id,
+                        installation_name,
+                        installation_path,
+                        backend_url,
+                        photos_bytes,
+                        videos_bytes,
+                        audios_bytes,
+                        texts_bytes,
+                        others_bytes
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            run_id,
+                            rec.installation_name,
+                            rec.installation_path,
+                            rec.backend_url,
+                            rec.photos_bytes,
+                            rec.videos_bytes,
+                            rec.audios_bytes,
+                            rec.texts_bytes,
+                            rec.others_bytes,
+                        )
+                        for rec in file_type_records
+                    ],
+                )
         conn.commit()
 
     return run_id, scanned_at
@@ -193,5 +310,6 @@ def save_scan(records: list[UsageRecord]) -> tuple[UUID, datetime]:
 
 def run_collection() -> tuple[UUID, datetime, int]:
     records = collect_usage_records()
-    run_id, scanned_at = save_scan(records)
+    file_type_records = collect_file_type_usage_records()
+    run_id, scanned_at = save_scan(records, file_type_records)
     return run_id, scanned_at, len(records)
