@@ -2,6 +2,8 @@
 
 Sistema para varrer instalacoes Docker dentro de diretorios raiz configurados, salvar uso de disco no Postgres e consultar via API.
 
+Referência completa da API: [API_REFERENCE.md](API_REFERENCE.md).
+
 ## O que ele faz
 
 - Procura instalacoes (pastas que tenham `volumes/`) dentro de cada raiz configurada.
@@ -147,8 +149,12 @@ APP_PORT=8004
 Se seu deploy sobe o processo Python diretamente, um exemplo de `DEPLOY_COMMAND` e:
 
 ```bash
-pkill -f "python3 -m scripts.run_api" || true
+if [ -f app.pid ] && kill -0 "$(cat app.pid)" 2>/dev/null; then
+  kill "$(cat app.pid)"
+  sleep 1
+fi
 nohup .venv/bin/python3 -m scripts.run_api > app.log 2>&1 &
+echo $! > app.pid
 ```
 
 ### Comportamento do deploy
