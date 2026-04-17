@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.collector import run_collection
+from app.collector import backend_url_match_key, normalize_backend_url, run_collection
 from app.config import settings
 from app.database import get_db, init_db
 from app.schemas import (
@@ -91,7 +91,10 @@ def latest_usage() -> LatestUsageResponse:
 
     items = [
         VolumeUsageItem(
-            **row,
+            **{
+                **row,
+                "backend_url": normalize_backend_url(row["backend_url"]),
+            },
             size_gb=round(row["size_bytes"] / (1024**3), 3),
         )
         for row in rows
@@ -143,7 +146,7 @@ def latest_usage_summary() -> LatestSummaryResponse:
             installation_path=row["installation_path"],
             total_bytes=row["total_bytes"],
             total_gb=round(row["total_bytes"] / (1024**3), 3),
-            backend_url=row["backend_url"],
+            backend_url=normalize_backend_url(row["backend_url"]),
         )
         for row in rows
     ]
@@ -170,7 +173,7 @@ def _build_file_type_item(row: dict) -> FileTypeUsageByInstallation:
     return FileTypeUsageByInstallation(
         installation_name=row["installation_name"],
         installation_path=row["installation_path"],
-        backend_url=row["backend_url"],
+        backend_url=normalize_backend_url(row["backend_url"]),
         photos_bytes=row["photos_bytes"],
         photos_mb=round(row["photos_bytes"] / (1024**2), 2),
         videos_bytes=row["videos_bytes"],
@@ -232,6 +235,10 @@ def latest_file_type_usage() -> LatestFileTypeUsageResponse:
 
 @app.get("/usage/latest/file-types/by-url", response_model=FileTypeUsageByUrlResponse)
 def latest_file_type_usage_by_url(url: str = Query(..., min_length=1)) -> FileTypeUsageByUrlResponse:
+    requested_url_key = backend_url_match_key(url)
+    if not requested_url_key:
+        raise HTTPException(status_code=400, detail="URL informada invalida")
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -259,13 +266,21 @@ def latest_file_type_usage_by_url(url: str = Query(..., min_length=1)) -> FileTy
                     texts_bytes,
                     others_bytes
                 FROM installation_filetype_usage
-                WHERE run_id = %s AND backend_url = %s
+                WHERE run_id = %s
                 ORDER BY installation_path
-                LIMIT 1
                 """,
-                (run_row["run_id"], url),
+                (run_row["run_id"],),
             )
-            row = cur.fetchone()
+            rows = cur.fetchall()
+
+    row = next(
+        (
+            item
+            for item in rows
+            if backend_url_match_key(item["backend_url"]) == requested_url_key
+        ),
+        None,
+    )
 
     if not row:
         raise HTTPException(status_code=404, detail="Nenhuma instalacao encontrada para a URL informada")

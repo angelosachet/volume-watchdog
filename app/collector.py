@@ -7,6 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 from uuid import UUID, uuid4
 
 from app.config import settings
@@ -45,29 +46,151 @@ BACKEND_URL_PATTERNS = (
     re.compile(r"^\s*BACKEND_URL\s*:\s*(?P<value>.+?)\s*$"),
 )
 
+ENV_FILE_PATTERN = re.compile(r"^\s*(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>.*?)\s*$")
+ENV_REFERENCE_PATTERN = re.compile(
+    r"^\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?P<sep>:-|-)(?P<default>.*))?\}$"
+)
+
 
 def _normalize_env_value(raw_value: str) -> str | None:
     value = raw_value.strip().strip('"').strip("'")
     return value or None
 
 
+def _read_env_values(installation_path: Path) -> dict[str, str]:
+    env_path = installation_path / ".env"
+    if not env_path.exists() or not env_path.is_file():
+        return {}
+
+    try:
+        content = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    values: dict[str, str] = {}
+    for line in content.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
+            continue
+
+        match = ENV_FILE_PATTERN.match(stripped_line)
+        if not match:
+            continue
+
+        parsed_value = _normalize_env_value(match.group("value"))
+        if parsed_value is None:
+            continue
+
+        values[match.group("key")] = parsed_value
+
+    return values
+
+
+def _resolve_compose_env_value(raw_value: str, env_values: dict[str, str]) -> str | None:
+    normalized_value = _normalize_env_value(raw_value)
+    if not normalized_value:
+        return None
+
+    env_reference = ENV_REFERENCE_PATTERN.match(normalized_value)
+    if not env_reference:
+        return normalized_value
+
+    env_name = env_reference.group("name")
+    resolved_value = _normalize_env_value(env_values.get(env_name, ""))
+    if resolved_value:
+        return resolved_value
+
+    default_value = env_reference.group("default")
+    if default_value is None:
+        return None
+
+    return _normalize_env_value(default_value)
+
+
+def normalize_backend_url(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+
+    normalized_value = _normalize_env_value(raw_value)
+    if not normalized_value:
+        return None
+
+    if ENV_REFERENCE_PATTERN.match(normalized_value):
+        return None
+
+    candidate = normalized_value
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+
+    hostname = parsed.hostname.lower()
+    port_segment = f":{parsed.port}" if parsed.port else ""
+    auth_segment = ""
+    if parsed.username:
+        auth_segment = parsed.username
+        if parsed.password:
+            auth_segment = f"{auth_segment}:{parsed.password}"
+        auth_segment = f"{auth_segment}@"
+
+    normalized_path = parsed.path.rstrip("/")
+    if normalized_path == "/":
+        normalized_path = ""
+
+    return urlunparse(
+        (
+            parsed.scheme.lower(),
+            f"{auth_segment}{hostname}{port_segment}",
+            normalized_path,
+            "",
+            "",
+            "",
+        )
+    )
+
+
+def backend_url_match_key(raw_value: str | None) -> str | None:
+    normalized_url = normalize_backend_url(raw_value)
+    if not normalized_url:
+        return None
+
+    parsed = urlparse(normalized_url)
+    if not parsed.hostname:
+        return None
+
+    normalized_path = parsed.path.rstrip("/")
+    host_segment = parsed.hostname.lower()
+    if parsed.port:
+        host_segment = f"{host_segment}:{parsed.port}"
+
+    return f"{host_segment}{normalized_path}".lower()
+
+
 def _extract_backend_url(installation_path: Path) -> str | None:
     compose_path = installation_path / "docker-compose.yml"
     if not compose_path.exists() or not compose_path.is_file():
-        return None
+        env_values = _read_env_values(installation_path)
+        return normalize_backend_url(env_values.get("BACKEND_URL"))
 
     try:
         content = compose_path.read_text(encoding="utf-8")
     except OSError:
         return None
 
+    env_values = _read_env_values(installation_path)
+
     for line in content.splitlines():
         for pattern in BACKEND_URL_PATTERNS:
             match = pattern.match(line)
             if match:
-                return _normalize_env_value(match.group("value"))
+                resolved_value = _resolve_compose_env_value(match.group("value"), env_values)
+                normalized_url = normalize_backend_url(resolved_value)
+                if normalized_url:
+                    return normalized_url
 
-    return None
+    return normalize_backend_url(env_values.get("BACKEND_URL"))
 
 
 def _du_bytes_for_volumes(volumes_path: Path) -> list[tuple[str, int]]:

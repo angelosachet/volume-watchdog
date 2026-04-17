@@ -191,6 +191,7 @@ Resposta 404 (sem coleta):
 
 ### GET /usage/latest/file-types/by-url
 Retorna somente a instalacao cuja `backend_url` bate com a URL informada.
+Comparacao normalizada: ignora diferenca de protocolo (`http`/`https`) e barra final.
 
 Query params:
 - `url` (obrigatorio, string, minimo 1 caractere)

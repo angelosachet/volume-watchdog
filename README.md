@@ -1,75 +1,115 @@
-# Volume Watchdog
+# Size Manager (Volume Watchdog)
 
-Sistema para varrer instalacoes Docker dentro de diretorios raiz configurados, salvar uso de disco no Postgres e consultar via API.
+API para coletar uso de disco de instalacoes Docker e guardar historico no Postgres.
 
-Referência completa da API: [API_REFERENCE.md](API_REFERENCE.md).
+O sistema encontra instalacoes com pasta `volumes/`, mede tamanho por volume, calcula distribuicao por tipo de arquivo e expoe tudo via FastAPI.
 
-## O que ele faz
+Documentacao detalhada da API: [API_REFERENCE.md](API_REFERENCE.md).
 
-- Procura instalacoes (pastas que tenham `volumes/`) dentro de cada raiz configurada.
-- Usa `ROOT_PATHS` do `.env` para definir quais diretorios raiz devem ser varridos.
-- Usa `SCAN_DEPTH` do `.env` para controlar ate quantos niveis abaixo de cada raiz a busca vai.
-- Executa `du -sb <instalacao>/volumes/*` para obter tamanho real em bytes.
-- Faz varredura de arquivos por extensao em cada instalacao (fotos/videos/audios/textos/outros), no estilo do comando `find ... | awk`.
-- Le `docker-compose.yml` de cada instalacao e extrai `BACKEND_URL` quando presente.
-- Salva cada leitura no Postgres com historico de coletas.
-- Exibe endpoints para listar execucoes e resumo em GB.
+## Principais funcionalidades
+
+- Descoberta automatica de instalacoes a partir de `ROOT_PATHS`.
+- Controle de profundidade de busca com `SCAN_DEPTH`.
+- Coleta de tamanho real dos volumes com `du -sb`.
+- Classificacao de arquivos por categoria: fotos, videos, audios, textos e outros.
+- Extracao opcional de `BACKEND_URL` no `docker-compose.yml` da instalacao.
+- Historico de execucoes (`scan_runs`) e dados agregados para consulta rapida.
+
+## Como a coleta funciona
+
+1. Para cada raiz em `ROOT_PATHS`, o coletor percorre diretorios ate `SCAN_DEPTH`.
+2. Uma instalacao e considerada valida quando contem uma pasta `volumes/`.
+3. O tamanho de cada item em `volumes/*` e salvo em `volume_usage`.
+4. Todos os arquivos da instalacao sao lidos para montar o total por tipo em `installation_filetype_usage`.
+5. Cada execucao gera um `run_id` novo e timestamp em `scan_runs`.
 
 ## Requisitos
 
-- Linux com `du`
+- Linux com utilitario `du`
 - Python 3.11+
-- Postgres 14+
+- Postgres 14+ (ou via Docker Compose)
+
+## Estrutura do projeto
+
+```text
+app/
+  main.py         # rotas da API
+  collector.py    # descoberta e coleta
+  database.py     # conexao e schema SQL
+  config.py       # leitura de .env
+  schemas.py      # modelos de resposta
+scripts/
+  run_api.py
+  run_collection.py
+```
 
 ## Configuracao
 
-1. Copie o arquivo de exemplo:
+1. Copie o arquivo de ambiente:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Ajuste variaveis no `.env`:
+2. Ajuste as variaveis:
+
+| Variavel | Obrigatoria | Padrao | Descricao |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | Sim | - | String de conexao com Postgres |
+| `ROOT_PATHS` | Nao | `/data/apps,/opt/stacks` | Raizes separadas por virgula |
+| `SCAN_DEPTH` | Nao | `1` | Profundidade maxima da busca (minimo efetivo `0`) |
+| `CORS_ALLOW_ORIGINS` | Nao | `*` | Lista CSV de origens ou `*` |
+| `APP_PORT` | Nao | `8004` | Porta da API |
+
+Exemplo:
 
 ```env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/size_manager
 ROOT_PATHS=/data/apps,/opt/stacks
 SCAN_DEPTH=1
-CORS_ALLOW_ORIGINS=https://seu-frontend.com.br,http://localhost:5173
+CORS_ALLOW_ORIGINS=http://localhost:5173,https://frontend.exemplo.com
 APP_PORT=8004
 ```
 
-`CORS_ALLOW_ORIGINS` aceita lista separada por virgula. Use `*` para liberar todas as origens.
+## Rodando localmente
 
-## Subindo o Postgres local (opcional)
+1. (Opcional) subir Postgres local:
 
 ```bash
 docker compose up -d postgres
 ```
 
-## Instalacao e execucao
+2. Criar ambiente Python e instalar dependencias:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+3. Iniciar API:
+
+```bash
 python3 -m scripts.run_api
 ```
 
-`APP_PORT` define em qual porta a API sobe na VPS.
+A API sobe na porta definida por `APP_PORT` (padrao: `8004`).
 
-## Rodar coleta manual
-
-Via API:
+## Uso rapido
 
 ```bash
-curl -X POST http://localhost:8000/collect
+PORT="${APP_PORT:-8004}"
+curl -s "http://localhost:${PORT}/health"
+curl -s -X POST "http://localhost:${PORT}/collect"
+curl -s "http://localhost:${PORT}/usage/latest/summary"
 ```
 
-Via script:
+> `scanned_items` no `POST /collect` representa a quantidade de volumes coletados no run.
+
+## Coleta manual sem API
 
 ```bash
-python -m scripts.run_collection
+python3 -m scripts.run_collection
 ```
 
 ## Endpoints principais
@@ -78,75 +118,40 @@ python -m scripts.run_collection
 - `POST /collect`
 - `GET /runs?limit=20`
 - `GET /usage/latest`
-- `GET /usage/latest/summary` (total por instalacao e total geral em GB)
-- `GET /usage/latest/file-types` (categorias por instalacao no ultimo run)
-- `GET /usage/latest/file-types/by-url?url=https://instancia.exemplo.com` (retorna apenas a instalacao da URL)
+- `GET /usage/latest/summary`
+- `GET /usage/latest/file-types`
+- `GET /usage/latest/file-types/by-url?url=https://instancia.exemplo.com`
 
-Observacao: a rota `/` nao esta definida e retorna `404`. Use os endpoints acima ou `/docs`.
+UIs e contrato OpenAPI:
 
-## Exemplo de consulta por URL
+- Swagger UI: `/docs`
+- OpenAPI JSON: `/openapi.json`
 
-```bash
-curl "http://localhost:8000/usage/latest/file-types/by-url?url=https://cliente-a.exemplo.com"
-```
+## Agendamento com cron
 
-## Exemplo de resposta de resumo
-
-```json
-{
-  "run_id": "6d5b88d4-a73f-4f01-9b3e-6f13e8f5db9d",
-  "scanned_at": "2026-03-10T14:30:12.345678+00:00",
-  "total_bytes": 14567890123,
-  "total_gb": 13.566,
-  "installations": [
-    {
-      "installation_name": "cliente_a",
-      "installation_path": "/data/apps/cliente_a",
-      "total_bytes": 22334455,
-      "total_gb": 0.021
-    },
-    {
-      "installation_name": "cliente_b",
-      "installation_path": "/opt/stacks/cliente_b",
-      "total_bytes": 14545555668,
-      "total_gb": 13.545
-    }
-  ]
-}
-```
-
-## Agendamento com cron (a cada 30 minutos)
+Exemplo (a cada 30 minutos):
 
 ```bash
-*/30 * * * * cd /home/angelo/projects/size-manager && /home/angelo/projects/size-manager/.venv/bin/python -m scripts.run_collection >> /var/log/size-manager.log 2>&1
+*/30 * * * * cd /home/angelo/projects/size-manager && /home/angelo/projects/size-manager/.venv/bin/python3 -m scripts.run_collection >> /var/log/size-manager.log 2>&1
 ```
 
 ## Deploy com GitHub Actions
 
-O workflow foi criado em [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) e faz:
+Workflow: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 
-- Validacao no push para `main` (instala dependencias e roda `compileall`).
-- Deploy via SSH no servidor apos validacao bem-sucedida.
+- `validate`: instala dependencias e roda `python -m compileall app scripts`
+- `deploy`: publica via SSH no servidor
 
-### Secrets necessarios no GitHub
+Secrets esperados em **Settings > Secrets and variables > Actions**:
 
-No repositorio, configure em **Settings > Secrets and variables > Actions**:
+- `SSH_HOST`
+- `SSH_PORT`
+- `SSH_USER`
+- `SSH_PRIVATE_KEY`
+- `DEPLOY_PATH`
+- `DEPLOY_COMMAND`
 
-- `SSH_HOST`: host do servidor (ex.: `203.0.113.10`)
-- `SSH_PORT`: porta SSH (ex.: `22`)
-- `SSH_USER`: usuario SSH
-- `SSH_PRIVATE_KEY`: chave privada para acesso ao servidor
-- `DEPLOY_PATH`: caminho do projeto no servidor (ex.: `/home/deploy/size-manager`)
-- `DEPLOY_COMMAND`: comando final de restart/reload (ex.: `sudo systemctl restart size-manager`)
-
-Na VPS, configure o arquivo `.env` com `APP_PORT` para definir a porta da API.
-Exemplo:
-
-```env
-APP_PORT=8004
-```
-
-Se seu deploy sobe o processo Python diretamente, um exemplo de `DEPLOY_COMMAND` e:
+Exemplo de `DEPLOY_COMMAND` (processo Python simples):
 
 ```bash
 if [ -f app.pid ] && kill -0 "$(cat app.pid)" 2>/dev/null; then
@@ -155,20 +160,4 @@ if [ -f app.pid ] && kill -0 "$(cat app.pid)" 2>/dev/null; then
 fi
 nohup .venv/bin/python3 -m scripts.run_api > app.log 2>&1 &
 echo $! > app.pid
-```
-
-### Comportamento do deploy
-
-No servidor remoto, o pipeline executa:
-
-```bash
-cd $DEPLOY_PATH
-git fetch --all
-git checkout main
-git pull --ff-only origin main
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-$DEPLOY_COMMAND
 ```
