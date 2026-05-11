@@ -1,3 +1,8 @@
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,7 +21,39 @@ from app.schemas import (
     VolumeUsageItem,
 )
 
-app = FastAPI(title="Size Manager API", version="1.0.0")
+_scheduler = BackgroundScheduler()
+
+
+def _scheduled_collect() -> None:
+    try:
+        run_id, _, scanned_items = run_collection()
+        print(f"[scheduler] collected run_id={run_id} scanned_items={scanned_items}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[scheduler] collection failed: {exc}", flush=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    interval = settings.collect_interval_minutes
+    if interval > 0:
+        _scheduler.add_job(
+            _scheduled_collect,
+            IntervalTrigger(minutes=interval),
+            id="collect",
+            next_run_time=datetime.now(),
+            max_instances=1,
+            coalesce=True,
+        )
+        _scheduler.start()
+    try:
+        yield
+    finally:
+        if _scheduler.running:
+            _scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="Size Manager API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,11 +62,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
 
 
 @app.get("/health")

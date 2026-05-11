@@ -60,16 +60,20 @@ cp .env.example .env
 | `SCAN_DEPTH` | Nao | `1` | Profundidade maxima da busca (minimo efetivo `0`) |
 | `CORS_ALLOW_ORIGINS` | Nao | `*` | Lista CSV de origens ou `*` |
 | `APP_PORT` | Nao | `8004` | Porta da API |
+| `COLLECT_INTERVAL_MINUTES` | Nao | `30` | Intervalo do coletor automatico em minutos (0 desabilita) |
 
-Exemplo:
+Exemplo (rodando via docker compose, com o host do Postgres apontando para o servico interno):
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/size_manager
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/size_manager
 ROOT_PATHS=/data/apps,/opt/stacks
 SCAN_DEPTH=1
 CORS_ALLOW_ORIGINS=http://localhost:5173,https://frontend.exemplo.com
 APP_PORT=8004
+COLLECT_INTERVAL_MINUTES=30
 ```
+
+> Rodando fora do docker compose? Troque `postgres` por `localhost` no `DATABASE_URL`.
 
 ## Rodando localmente
 
@@ -127,37 +131,38 @@ UIs e contrato OpenAPI:
 - Swagger UI: `/docs`
 - OpenAPI JSON: `/openapi.json`
 
-## Agendamento com cron
+## Coleta automatica
 
-Exemplo (a cada 30 minutos):
+A API inicia um scheduler (APScheduler) que executa o coletor a cada `COLLECT_INTERVAL_MINUTES` minutos. A primeira execucao acontece logo apos o startup. Para desabilitar, defina `COLLECT_INTERVAL_MINUTES=0`.
+
+Coleta manual continua disponivel:
 
 ```bash
-*/30 * * * * cd /home/angelo/projects/size-manager && /home/angelo/projects/size-manager/.venv/bin/python3 -m scripts.run_collection >> /var/log/size-manager.log 2>&1
+docker compose exec api python -m scripts.run_collection
 ```
 
 ## Deploy com GitHub Actions
 
 Workflow: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 
-- `validate`: instala dependencias e roda `python -m compileall app scripts`
-- `deploy`: publica via SSH no servidor
+- `validate`: instala dependencias e roda `python -m compileall app scripts`.
+- `deploy`: faz SSH no servidor, sincroniza o repositorio, grava o `.env` a partir do secret `ENV_FILE` e sobe a stack com `docker compose up -d --build`.
+
+Pre-requisitos no servidor:
+
+- Docker Engine + plugin `docker compose` (v2).
+- Usuario SSH no grupo `docker` (ou com sudo configurado para `docker`).
+- Diretorios `/data/apps` e `/opt/stacks` acessiveis ao usuario do container (montados read-only).
 
 Secrets esperados em **Settings > Secrets and variables > Actions**:
 
-- `SSH_HOST`
-- `SSH_PORT`
-- `SSH_USER`
-- `SSH_PRIVATE_KEY`
-- `DEPLOY_PATH`
-- `DEPLOY_COMMAND`
+| Secret | Descricao |
+| --- | --- |
+| `SSH_HOST` | Host do servidor |
+| `SSH_PORT` | Porta SSH (normalmente `22`) |
+| `SSH_USER` | Usuario SSH |
+| `SSH_PRIVATE_KEY` | Chave privada SSH (em texto) |
+| `DEPLOY_PATH` | Caminho absoluto onde o repositorio sera clonado no servidor |
+| `ENV_FILE` | Conteudo completo do `.env` (DATABASE_URL com host `postgres`, ROOT_PATHS, etc.) |
 
-Exemplo de `DEPLOY_COMMAND` (processo Python simples):
-
-```bash
-if [ -f app.pid ] && kill -0 "$(cat app.pid)" 2>/dev/null; then
-  kill "$(cat app.pid)"
-  sleep 1
-fi
-nohup .venv/bin/python3 -m scripts.run_api > app.log 2>&1 &
-echo $! > app.pid
-```
+Cada deploy executa `git reset --hard origin/main` em `DEPLOY_PATH`, reescreve `.env` a partir do secret e roda `docker compose up -d --build`. Os dados do Postgres persistem no volume nomeado `pgdata`.

@@ -40,25 +40,33 @@ jobs:
     steps:
       - name: Deploy through SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          REPO: ${{ github.repository }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
+          envs: ENV_FILE,DEPLOY_PATH,REPO
           script_stop: true
           script: |
-            set -e
-            mkdir -p ${{ secrets.DEPLOY_PATH }}
-            cd ${{ secrets.DEPLOY_PATH }}
+            set -euo pipefail
+
+            mkdir -p "$DEPLOY_PATH"
+            cd "$DEPLOY_PATH"
+
             if [ ! -d .git ]; then
-              git init
-              git remote add origin https://github.com/${{ github.repository }}.git
+              git init -b main
+              git remote add origin "https://github.com/${REPO}.git"
             fi
-            git fetch --all
-            git checkout main
-            git pull --ff-only origin main
-            python3 -m venv .venv
-            source .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            ${{ secrets.DEPLOY_COMMAND }}
+
+            git fetch origin main
+            git reset --hard origin/main
+
+            printf '%s\n' "$ENV_FILE" > .env
+            chmod 600 .env
+
+            docker compose up -d --build
+            docker compose ps

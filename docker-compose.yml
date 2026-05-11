@@ -1,9 +1,8 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16
     container_name: size-manager-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: size_manager
       POSTGRES_USER: postgres
@@ -12,6 +11,20 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: volume-watchdog-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8004}:${APP_PORT:-8004}"
+    volumes:
+      - "/data/apps:/data/apps:ro"
+      - "/opt/stacks:/opt/stacks:ro"
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:

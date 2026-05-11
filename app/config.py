@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     scan_depth: int = 1
     cors_allow_origins: str = "*"
     app_port: int = 8004
+    collect_interval_minutes: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
