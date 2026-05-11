@@ -68,5 +68,11 @@ jobs:
             printf '%s\n' "$ENV_FILE" > .env
             chmod 600 .env
 
+            # Stop the legacy nohup-based process if any prior deploy left it behind.
+            if [ -f app.pid ]; then
+              kill "$(cat app.pid)" 2>/dev/null || true
+              rm -f app.pid
+            fi
+
             docker compose up -d --build
             docker compose ps
